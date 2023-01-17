@@ -72,14 +72,14 @@ class CMakeBuild(build_ext):
 
 
 setup(
-    name='lfmc_gym',
+    name='imitate_gym',
     version='0.2',
     author='Siddhant Gangapurwala',
     packages=find_packages(),
     author_email='siddhant@gangapurwala.com',
     description='Training repository for low-frequency motion control policies.',
     long_description='',
-    ext_modules=[CMakeExtension('_lfmc_gym')],
+    ext_modules=[CMakeExtension('imitate_gym')],
     install_requires=['ruamel.yaml', 'numpy', 'torch', 'tensorboard>=1.15', 'pillow', 'psutil'],
     cmdclass=dict(build_ext=CMakeBuild),
     include_package_data=True,

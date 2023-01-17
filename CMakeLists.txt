@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(_lfmc_gym)
+project(imitate_gym)
 set(CMAKE_CXX_STANDARD 17)
 
 list(APPEND CMAKE_PREFIX_PATH "$ENV{LOCAL_INSTALL}")
