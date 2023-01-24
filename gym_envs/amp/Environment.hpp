@@ -81,7 +81,7 @@ namespace raisim {
             robot_->setGeneralizedForce(Eigen::VectorXd::Zero(gvDim_));
 
             /// MUST BE DONE FOR ALL ENVIRONMENTS
-            obDim_ = 48;
+            obDim_ = 60;
             actionDim_ = nJoints_;
             actionMean_.setZero(actionDim_);
             actionStd_.setZero(actionDim_);
@@ -133,7 +133,7 @@ namespace raisim {
 
             /// load expert dataset
             enableExpertDatasetInitialisation_ = cfg["enable_expert_dataset_initialisation"].template As<bool>();
-            dataset_ = load_csv<MatrixXd>(resourceDir + "/expert_data/expert_data_processed.csv");
+            dataset_ = load_csv<MatrixXd>(resourceDir + "/expert_data/expert_data_processed_w_feet.csv");
             datasetSize_ = dataset_.rows();
 
             /// visualize if it is the first environment
@@ -155,8 +155,8 @@ namespace raisim {
                 Eigen::VectorXd state = dataset_.row(row);
 
                 /// build gc
-                gc << 0, 0, state(33), // position
-                        state(37), state.segment(34, 3), // orientation (quaternions)
+                gc << 0, 0, state(45), // position
+                        state(49), state.segment(46, 3), // orientation (quaternions)
                         state.segment(3, 12); // joint positions
 
                 /// build gv
