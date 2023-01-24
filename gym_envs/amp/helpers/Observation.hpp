@@ -10,6 +10,7 @@ private:
     Eigen::VectorXd jointNominalConfig_, feetNominalPositions_;
     Eigen::VectorXd generalizedCoordinate_, generalizedVelocity_, generalizedForce_;
     Eigen::VectorXd baseLinearVelocity_, baseAngularVelocity_;
+    Eigen::VectorXd footPositions_;
     Eigen::VectorXd desiredBaseLinearVelocity_, desiredBaseAngularVelocity_;
     Eigen::VectorXd desiredJointPosition_;
     raisim::Mat<3, 3> baseRotation_{}, baseRotationVerticalComponent_{};
@@ -17,9 +18,14 @@ private:
 
     Eigen::VectorXd varJoint_;
 
-    int observationDim_ = 48;
+    int observationDim_ = 60;
     int historyLength_ = 4, nJoints_ = 12;
     double nominalBaseHeight_ = 0.522;
+
+    std::string footNames_[4] = {"LF_shank_fixed_LF_FOOT",
+                                 "RF_shank_fixed_RF_FOOT",
+                                 "LH_shank_fixed_LH_FOOT",
+                                 "RH_shank_fixed_RH_FOOT"};
 
     Eigen::VectorXd nominalGeneralizedCoordinates_;
 
@@ -51,6 +57,8 @@ public:
         desiredBaseLinearVelocity_.setZero(3);
         desiredBaseAngularVelocity_.setZero(3);
 
+        footPositions_.setZero(12);
+
         baseRotation_.setIdentity();
         varJoint_.setZero(nJoints_);
 
@@ -79,16 +87,27 @@ public:
         baseLinearVelocity_ = baseRotation_.e().transpose() * generalizedVelocity_.segment(0, 3);
         baseAngularVelocity_ = baseRotation_.e().transpose() * generalizedVelocity_.segment(3, 3);
 
+        // Get foot positions
+        raisim::Vec<3> footPos;
+
+        for (int idx = 0; idx <4; ++idx) {
+            robot->getFramePosition(footNames_[idx], footPos);
+            Eigen::VectorXd footPosBodyFrame = baseRotation_.e().transpose() *
+                    (footPos.e() - generalizedCoordinate_.segment(0, 3));
+            footPositions_.segment(3*idx,3) = footPosBodyFrame;
+        }
+
         /// Set State Vector
         observation_.segment(0, 3) = baseRotation_.e().row(2).transpose();   // Indices 0 - 2: Gravity Axes
         observation_.segment(3, nJoints_) = generalizedCoordinate_.tail(nJoints_);    // Indices 3 - 14: Joint Positions
         observation_.segment(15, 3) = baseAngularVelocity_;    // Index 15 - 17: Angular Velocity
         observation_.segment(18, nJoints_) = generalizedVelocity_.tail(nJoints_);   // Index 18 - 29: Joint Velocities
         observation_.segment(30, 3) = baseLinearVelocity_;  // Index 30 - 32: Base Linear Velocity
-        observation_.segment(33, 2) = desiredBaseLinearVelocity_.head(2);  // Index 33 - 34: Velocity Command Linear
-        observation_.segment(35, 1) = desiredBaseAngularVelocity_.tail(1);  // Index 35: Velocity Command Angular
-        observation_.segment(36, 12) = desiredJointPosition - generalizedCoordinate_.tail(
-                nJoints_);    // Index 36 - 47: Joint Position Tracking Error
+        observation_.segment(33, 12) = footPositions_;  // Index 33 - 44: Foot Positions
+        observation_.segment(45, 2) = desiredBaseLinearVelocity_.head(2);  // Index 45 - 46: Velocity Command Linear
+        observation_.segment(47, 1) = desiredBaseAngularVelocity_.tail(1);  // Index 47: Velocity Command Angular
+        observation_.segment(48, 12) = desiredJointPosition - generalizedCoordinate_.tail(
+                nJoints_);    // Index 48 - 59: Joint Position Tracking Error
     }
 
     void updateVelocityCommand(const Eigen::VectorXd &velocityCommand) {
