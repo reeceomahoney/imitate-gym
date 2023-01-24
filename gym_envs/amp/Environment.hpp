@@ -131,10 +131,15 @@ namespace raisim {
             /// Dynamics Randomization
             enableDynamicsRandomization_ = cfg["enable_dynamics_randomization"].template As<bool>();
 
+            /// load expert dataset
+            enableExpertDatasetInitialisation_ = cfg["enable_expert_dataset_initialisation"].template As<bool>();
+            dataset_ = load_csv<MatrixXd>(resourceDir + "/expert_data/expert_data_processed.csv");
+            datasetSize_ = dataset_.rows();
+
             /// visualize if it is the first environment
             if (visualizable_) {
                 server_ = std::make_unique<raisim::RaisimServer>(world_.get());
-                server_->launchServer();
+                server_->launchServer(8086);
                 server_->focusOn(robot_);
                 visualizationHandler_.setServer(server_);
             }
@@ -143,7 +148,27 @@ namespace raisim {
         void init() final {}
 
         void reset() final {
-            Eigen::VectorXd gc = gc_init_, gv = gv_init_; /// TODO: change initialisation
+            Eigen::VectorXd gc = gc_init_, gv = gv_init_;
+
+            if (enableExpertDatasetInitialisation_) {
+                int row = (datasetSize_ - 1) * abs(uniformRealDistribution_(gen_));
+                Eigen::VectorXd state = dataset_.row(row);
+
+                /// build gc
+                gc << 0, 0, state(33), // position
+                        state(37), state.segment(34, 3), // orientation (quaternions)
+                        state.segment(3, 12); // joint positions
+
+                /// build gv
+                raisim::Vec<4> quat;
+                raisim::Mat<3,3> rot{};
+                quat[0] = gc[3]; quat[1] = gc[4]; quat[2] = gc[5]; quat[3] = gc[6];
+                raisim::quatToRotMat(quat, rot);
+                Eigen::VectorXd linVel = rot.e() * state.segment(30, 3);
+                Eigen::VectorXd angVel = rot.e() * state.segment(15, 3);
+
+                gv << linVel, angVel, state.segment(18, 12);
+            }
 
             if (enableDynamicsRandomization_) {
                 gc[2] += 0.2 * std::abs(uniformRealDistribution_(gen_));
@@ -337,9 +362,14 @@ namespace raisim {
         int maxEpisodeLength_;
         int stepCount_ = 0;
 
-        /// Dynamics Randomization Parameters
+        // Dynamics Randomization Parameters
         bool enableDynamicsRandomization_ = false;
         double baseMassMean_;
+
+        // Expert dataset
+        bool enableExpertDatasetInitialisation_ = false;
+        Eigen::MatrixXd dataset_;
+        int datasetSize_;
 
         bool useActuatorNetwork_ = true;
 
