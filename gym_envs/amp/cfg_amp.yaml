@@ -6,14 +6,14 @@ environment:
   num_envs: 600
   eval_every_n: 400
   save_every_n: 50
-  num_threads: '30'
+  num_threads: '60'
   simulation_dt: 0.0025
   control_dt: 0.04
   max_time: 24.0
   log_interval: 8
   enable_dynamics_randomization: True
   episode_length_for_dynamics_learning: 2.0
-  enable_expert_dataset_initialisation: False
+  enable_expert_dataset_initialisation: True
 
   action_scaling: 1.0
 
@@ -43,13 +43,13 @@ environment:
     base_orientation:
       coeff: 0
     base_linear_velocity_tracking:
-      coeff: 1
-    base_angular_velocity_tracking:
-      coeff: 1
-    joint_torque:
-      coeff: -0.025
-    joint_velocity:
       coeff: 0
+    base_angular_velocity_tracking:
+      coeff: 0
+    joint_torque:
+      coeff: -0.01
+    joint_velocity:
+      coeff: -0.001
     joint_position:
       coeff: 0
     action_smoothness:
@@ -69,7 +69,7 @@ environment:
     trotting:
       coeff: 0
     joint_jerk:
-      coeff: 0
+      coeff: -0.0001
     vertical_linear_velocity:
       coeff: 0
     horizontal_angular_velocity:
@@ -83,15 +83,16 @@ environment:
     angular_velocity: [ 15, 18 ]
     joint_velocity: [ 18, 30 ]
     linear_velocity: [ 30, 33 ]
-    command: [33, 36]
-    joint_position_error: [36, 48]
+    foot_position: [ 33, 45]
+    command: [45, 48]
+    joint_position_error: [48, 60]
 
     positions: [ 0, 15 ]
     velocities: [ 15, 33 ]
 
-    actor_input: [ 0, 48 ]
-    critic_input: [ 0, 48 ]
-    discriminator_input: [ 0, 66 ]
+    actor_input: [ 0, 60 ]
+    critic_input: [ 0, 60 ]
+    discriminator_input: [ 0, 90 ]
 
     recurrent_input: [0, 48]
 
