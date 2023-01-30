@@ -89,11 +89,15 @@ class AMP:
     def log(self, variables):
         self.tot_timesteps += self.num_transitions_per_env * self.num_envs
         # self.writer.add_scalar('AMP/pred_loss', variables['mean_pred_loss'], variables['it'])
-        self.writer.add_scalar('AMP/discriminator_accuracy', variables['accuracy_tot'], variables['it'])
+        self.writer.add_scalars('AMP/accuracy', {
+            'expert_acc': variables['expert_acc'],
+            'agent_acc': variables['agent_acc']
+        }, variables['it'])
 
     def train_step(self, log_this_iteration):
         mean_pred_loss = 0
-        accuracy_tot = 0
+        expert_acc_tot = 0
+        agent_acc_tot = 0
 
         # convert agent obs to a pytorch dataloader
         agent_dl = self.agent_to_dataloader()
@@ -113,8 +117,8 @@ class AMP:
                 # Calculate loss
                 pred_loss = self.calculate_prediction_loss(predictions, targets)
                 grad_pen_loss = self.grad_pen_weight / 2 * self.calculate_gradient_penalty(expert_sample)
-                logit_loss = 0.05 * torch.norm(predictions)
-                output = pred_loss + grad_pen_loss + logit_loss
+                # logit_loss = 0.05 * torch.norm(predictions)
+                output = pred_loss  # + grad_pen_loss + logit_loss
 
                 self.optimizer.zero_grad()
                 output.backward()
@@ -124,20 +128,23 @@ class AMP:
                     mean_pred_loss += pred_loss.item()
 
                     # calculate classification error
-                    classifications = np.sign(predictions.cpu().detach().numpy()).reshape(-1,)
-                    accuracy = [bool(x == y) for x, y in zip(classifications, targets.cpu().detach().numpy())]
-                    accuracy_tot += sum(accuracy) / (self.mini_batch_size * 2)
+                    expert_acc = predictions[:256, :] > 0
+                    expert_acc_tot += torch.mean(expert_acc.float()).item()
+                    agent_acc = predictions[256:, :] < 0
+                    agent_acc_tot += torch.mean(agent_acc.float()).item()
 
         if log_this_iteration:
             num_mini_batches = len(agent_dl)
             num_updates = self.num_learning_epochs * num_mini_batches
             mean_pred_loss /= num_updates
-            accuracy_tot /= num_updates
+            expert_acc_tot /= num_updates
+            agent_acc_tot /= num_updates
 
         # for logging
         disc_info = {
             'mean_pred_loss': mean_pred_loss,
-            'accuracy_tot': accuracy_tot,
+            'expert_acc': expert_acc_tot,
+            'agent_acc': agent_acc_tot,
             'learning_rate': self.learning_rate
         }
 
@@ -205,7 +212,7 @@ class AMP:
 
         return grad_pen
 
-    @staticmethod
-    def get_disc_reward(prediction):
-        style_rewards = -torch.log(1 - 1 / (1 + torch.exp(-prediction)))
+    def get_disc_reward(self, prediction):
+        # style_rewards = -torch.log(1 - 1 / (1 + torch.exp(-prediction)))
+        style_rewards = torch.max(torch.zeros(1).to(self.device), 1 - 0.25 * torch.square(prediction - 1))
         return style_rewards.cpu().detach().numpy().reshape((-1,))
