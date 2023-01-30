@@ -59,13 +59,16 @@ class RewardLogger:
 
         self.reset()
 
-    def step(self):
+    def step(self, style_reward):
         # Log rewards
         envs_reward_info = self._env.get_reward_info()
 
         for reward_info in envs_reward_info:
             for term in self._reward_terms:
-                self._reward_storage_dict[term].append(reward_info[term])
+                if term == "style":
+                    self._reward_storage_dict[term].append(style_reward)
+                else:
+                    self._reward_storage_dict[term].append(reward_info[term])
 
     def log_to_tensorboard(self, writer, it):
         # Compute Episodic Mean and Standard Deviation of Individual Reward Terms
@@ -73,22 +76,22 @@ class RewardLogger:
             self._reward_mean_dict[term] = np.mean(np.array(self._reward_storage_dict[term]))
             self._reward_std_dict[term] = np.std(np.array(self._reward_storage_dict[term]))
 
-            if self._episodic_reset_count > 0:
-                self._reward_mean_of_means_dict[term] = np.mean(np.array(self._reward_mean_moving_storage_dict[term]))
-                self._reward_std_of_means_dict[term] = np.std(np.array(self._reward_mean_moving_storage_dict[term]))
-
-                self._reward_mean_of_stds_dict[term] = np.mean(np.array(self._reward_std_moving_storage_dict[term]))
-                self._reward_std_of_stds_dict[term] = np.std(np.array(self._reward_std_moving_storage_dict[term]))
+            # if self._episodic_reset_count > 0:
+            #     self._reward_mean_of_means_dict[term] = np.mean(np.array(self._reward_mean_moving_storage_dict[term]))
+            #     self._reward_std_of_means_dict[term] = np.std(np.array(self._reward_mean_moving_storage_dict[term]))
+            #
+            #     self._reward_mean_of_stds_dict[term] = np.mean(np.array(self._reward_std_moving_storage_dict[term]))
+            #     self._reward_std_of_stds_dict[term] = np.std(np.array(self._reward_std_moving_storage_dict[term]))
 
         writer.add_scalars('Rewards/Episodic/mean', self._reward_mean_dict, it)
         writer.add_scalars('Rewards/Episodic/std', self._reward_std_dict, it)
 
-        if self._episodic_reset_count > 0:
-            writer.add_scalars('Rewards/Windowed/Means/mean', self._reward_mean_of_means_dict, it)
-            writer.add_scalars('Rewards/Windowed/Means/std', self._reward_std_of_means_dict, it)
-
-            writer.add_scalars('Rewards/Windowed/Stds/mean', self._reward_mean_of_stds_dict, it)
-            writer.add_scalars('Rewards/Windowed/Stds/std', self._reward_std_of_stds_dict, it)
+        # if self._episodic_reset_count > 0:
+        #     writer.add_scalars('Rewards/Windowed/Means/mean', self._reward_mean_of_means_dict, it)
+        #     writer.add_scalars('Rewards/Windowed/Means/std', self._reward_std_of_means_dict, it)
+        #
+        #     writer.add_scalars('Rewards/Windowed/Stds/mean', self._reward_mean_of_stds_dict, it)
+        #     writer.add_scalars('Rewards/Windowed/Stds/std', self._reward_std_of_stds_dict, it)
 
     def episodic_reset(self):
         # Reset episodic storage dict and add the episodic mean and std to the moving dicts

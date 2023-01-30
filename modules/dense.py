@@ -84,3 +84,63 @@ class DenseActorCriticModule(module.ActorCriticModule):
         writer.add_image('NetworkJacobian/Std', jacobian_std.transpose(0, 1), it, dataformats='HW')
 
         return None
+
+
+class DenseDiscriminatorModule(module.Critic):
+    def __init__(self, obs_shape, hidden_layers, activation, device='cpu',
+                 compute_jacobian=False, observation_indices=None, network_weights_gain=np.sqrt(2)):
+        if observation_indices is None:
+            self._input_indices = list(range(obs_shape))
+        else:
+            self._input_indices = list(
+                range(observation_indices['discriminator_input'][0], observation_indices['discriminator_input'][1]))
+
+        # Create critic network architecture
+        critic_architecture = CriticNetworkArchitecture(input_dim=len(self._input_indices),
+                                                        hidden_layers=hidden_layers,
+                                                        activation=activation,
+                                                        network_weights_gain=network_weights_gain)
+
+        # Initialize base constructor
+        super().__init__(critic_architecture, device)
+
+        self._evaluate_count = 0
+        self._compute_jacobian = compute_jacobian
+
+        self._jacobian = None
+
+    def evaluate(self, obs):
+        disc_logits = super().evaluate(obs[:, self._input_indices])
+
+        # Only compute network Jacobian during the first evaluation before reset
+        if self._compute_jacobian and self._evaluate_count == 0:
+            batch_size = min(100, obs.shape[0])
+
+            # Indexing at the end gets rid of all the 0s for inputs that don't correspond to outputs
+            self._jacobian = torch.autograd.functional.jacobian(
+                self.architecture.forward, obs[-batch_size:, self._input_indices], vectorize=True,
+                strategy='reverse-mode')[torch.arange(batch_size), :, torch.arange(batch_size), :]
+
+        self._evaluate_count += 1
+        return disc_logits
+
+    def predict(self, obs):
+        return super().predict(obs[..., self._input_indices])
+
+    def reset(self):
+        self._evaluate_count = 0
+        self._jacobian = None
+
+    def loss(self, writer=None, it=0):
+        if writer is None or self._jacobian is None:
+            return None
+
+        jacobian_mean, jacobian_std = torch.std_mean(torch.abs(self._jacobian), dim=0)
+
+        jacobian_mean = jacobian_mean / torch.max(jacobian_mean)
+        jacobian_std = jacobian_std / torch.max(jacobian_std)
+
+        writer.add_image('DiscriminatorJacobian/Mean', jacobian_mean.transpose(0, 1), it, dataformats='HW')
+        writer.add_image('DiscriminatorJacobian/Std', jacobian_std.transpose(0, 1), it, dataformats='HW')
+
+        return None

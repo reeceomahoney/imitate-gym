@@ -3,7 +3,7 @@ record_video: True    # Is considered False if <environment.render> = False belo
 
 environment:
   render: True
-  num_envs: 600
+  num_envs: 100
   eval_every_n: 400
   save_every_n: 50
   num_threads: '60'
@@ -43,13 +43,13 @@ environment:
     base_orientation:
       coeff: 0
     base_linear_velocity_tracking:
-      coeff: 0
+      coeff: 1
     base_angular_velocity_tracking:
-      coeff: 0
+      coeff: 1
     joint_torque:
-      coeff: -0.01
+      coeff: 0 #-0.025
     joint_velocity:
-      coeff: -0.001
+      coeff: 0 #-0.1
     joint_position:
       coeff: 0
     action_smoothness:
@@ -69,7 +69,7 @@ environment:
     trotting:
       coeff: 0
     joint_jerk:
-      coeff: -0.0001
+      coeff: 0 #-0.001
     vertical_linear_velocity:
       coeff: 0
     horizontal_angular_velocity:

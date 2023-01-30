@@ -1,5 +1,5 @@
 from ruamel.yaml import YAML, dump, RoundTripDumper
-from raisim_gym_torch.env.bin import anymal_velocity_command
+from raisim_gym_torch.env.bin import amp
 from raisim_gym_torch.env.RaisimGymVecEnv import RaisimGymVecEnv as VecEnv
 import os
 import math
@@ -27,12 +27,12 @@ parser.add_argument('-w', '--weight', help='trained weight path', type=str, defa
 args = parser.parse_args()
 
 # directories
-task_name = "anymal_velocity_command"
+task_name = "amp"
 home_path = os.path.realpath(os.path.dirname(os.path.realpath(__file__)) + '/../../')
 task_path = home_path + "/gym_envs/" + task_name
 
 # config
-cfg = YAML().load(open(task_path + "/cfg.yaml", 'r'))
+cfg = YAML().load(open(task_path + "/cfg_amp.yaml", 'r'))
 
 # create environment from the configuration file
 cfg['environment']['num_envs'] = 1
@@ -40,7 +40,7 @@ cfg['environment']['render'] = True
 cfg['environment']['enable_dynamics_randomization'] = False
 
 env = VecEnv(
-    anymal_velocity_command.RaisimGymEnv(home_path + "/resources", dump(cfg['environment'], Dumper=RoundTripDumper)),
+    amp.RaisimGymEnv(home_path + "/resources", dump(cfg['environment'], Dumper=RoundTripDumper)),
     cfg['environment'])
 
 # Set seed
@@ -49,7 +49,7 @@ random.seed(cfg['seed'])
 torch.manual_seed(cfg['seed'])
 np.random.seed(cfg['seed'])
 
-actor_critic_module = modules.get_actor_critic_module_from_config(cfg, env, anymal_velocity_command.NormalSampler,
+actor_critic_module = modules.get_actor_critic_module_from_config(cfg, env, amp.NormalSampler,
                                                                   device='cpu')
 
 # shortcuts

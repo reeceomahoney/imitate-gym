@@ -41,6 +41,19 @@ find_package(raisim CONFIG REQUIRED)
 include_directories(dependencies/networks_minimal/include)
 include_directories(dependencies/actuation_dynamics/include)
 
+#############
+### tests ###
+#############
+SET(TEST_FILES "")
+LIST(APPEND TEST_FILES test_dataset)
+
+FOREACH(file ${TEST_FILES})
+    add_executable(${file} tests/${file}.cpp)
+    target_link_libraries(${file} PUBLIC raisim::raisim pthread)
+    target_include_directories(${file} PUBLIC gym_envs/amp ${EIGEN3_INCLUDE_DIRS})
+    set_target_properties(${file} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/bin)
+ENDFOREACH()
+
 ######################
 ### Build and Link ###
 ######################
