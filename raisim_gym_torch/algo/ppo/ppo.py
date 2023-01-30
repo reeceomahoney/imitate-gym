@@ -3,7 +3,6 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from .storage import RolloutStorage
 
 
@@ -14,6 +13,7 @@ class PPO:
                  num_transitions_per_env,
                  num_learning_epochs,
                  num_mini_batches,
+                 writer,
                  clip_param=0.2,
                  gamma=0.998,
                  lam=0.95,
@@ -40,6 +40,12 @@ class PPO:
             self.batch_sampler = self.storage.mini_batch_generator_inorder
 
         self.optimizer = optim.Adam(self.actor_critic_module.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam([{'params': self.actor_critic_module.actor.parameters(),
+                                      'lr': 5e-4,
+                                      'weight_decay': 0.0},
+                                     {'params': self.actor_critic_module.critic.parameters(),
+                                      'lr': 1e-3,
+                                      'weight_decay': 0.0}])
         self.device = device
 
         # env parameters
@@ -59,7 +65,7 @@ class PPO:
 
         # Log
         self.log_dir = os.path.join(log_dir, datetime.now().strftime('%b%d_%H-%M-%S'))
-        self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
+        self.writer = writer
         self.tot_timesteps = 0
         self.tot_time = 0
 
@@ -120,7 +126,7 @@ class PPO:
         self.writer.add_scalar('PPO/value_function', variables['mean_value_loss'], variables['it'])
         self.writer.add_scalar('PPO/surrogate', variables['mean_surrogate_loss'], variables['it'])
         self.writer.add_scalar('PPO/mean_noise_std', mean_std.item(), variables['it'])
-        self.writer.add_scalar('PPO/learning_rate', self.learning_rate, variables['it'])
+        # self.writer.add_scalar('PPO/learning_rate', self.learning_rate, variables['it'])
 
     def _train_step(self, log_this_iteration, it):
         mean_value_loss = 0
@@ -136,7 +142,7 @@ class PPO:
                 num_mini_batches = self.num_mini_batches
 
             for obs_batch, actions_batch, old_sigma_batch, old_mu_batch, current_values_batch, advantages_batch, \
-                returns_batch, old_actions_log_prob_batch, indices in self.batch_sampler(num_mini_batches):
+                    returns_batch, old_actions_log_prob_batch, indices in self.batch_sampler(num_mini_batches):
 
                 with torch.autograd.set_detect_anomaly(False):
                     actions_log_prob_batch, entropy_batch, value_batch = self.actor_critic_module.evaluate(
@@ -152,7 +158,7 @@ class PPO:
                             kl = torch.sum(
                                 torch.log(sigma_batch / old_sigma_batch + 1.e-5) + (
                                         torch.square(old_sigma_batch) + torch.square(old_mu_batch - mu_batch)) / (
-                                        2.0 * torch.square(sigma_batch)) - 0.5, axis=-1)
+                                        2.0 * torch.square(sigma_batch)) - 0.5, dim=-1)
                             kl_mean = torch.mean(kl)
 
                             if kl_mean > self.desired_kl * 2.0:
