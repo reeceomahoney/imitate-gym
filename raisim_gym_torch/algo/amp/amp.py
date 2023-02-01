@@ -2,12 +2,12 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
+from collections import deque
 
 
 class AMP:
     def __init__(self,
                  discriminator,
-                 ppo,
                  num_envs,
                  num_transitions_per_env,
                  num_learning_epochs,
@@ -15,38 +15,33 @@ class AMP:
                  expert_dataset,
                  writer,
                  learning_rate=1e-5,
+                 weight_decay=0.005,
+                 logit_reg_weight=0.05,
                  device='cpu'):
 
-        # core
-        self.ppo = ppo
+        # discriminator
         self.ob_dim = discriminator.obs_shape[0] // 2
         self.discriminator = discriminator
-        self.obs = np.zeros([num_transitions_per_env, num_envs, self.ob_dim], dtype=np.float32)
 
         # torch
         self.learning_rate = learning_rate
-        self.optimizer = optim.Adam([*self.discriminator.parameters()], lr=learning_rate, weight_decay=0.0005)
+        self.optimizer = optim.Adam([*self.discriminator.parameters()], lr=learning_rate, weight_decay=weight_decay)
         self.device = device
-        self.obs_tc = torch.from_numpy(self.obs).to(self.device).type(torch.float32)
 
-        # transitions
-        transitions = np.zeros([(num_transitions_per_env - 1) * num_envs, *discriminator.obs_shape], dtype=np.float32)
-        self.transitions_tc = torch.from_numpy(transitions).to(self.device).type(torch.float32)
-        transitions_stacked = np.zeros([num_transitions_per_env - 1, num_envs, *discriminator.obs_shape],
-                                       dtype=np.float32)
-        self.transitions_tc_stacked = torch.from_numpy(transitions_stacked).to(self.device).type(torch.float32)
-
-        # Log
+        # log
         self.writer = writer
         self.tot_timesteps = 0
-        self.tot_time = 0
 
         # expert dataset
         self.expert_tc = self.process_expert_dataset(expert_dataset)
         self.expert_tc_norm = torch.zeros_like(self.expert_tc)
         self.expert_size = self.expert_tc.size()[0]
-        self.obs_mean = np.zeros(self.ob_dim)
-        self.obs_var = np.zeros(self.ob_dim)
+
+        # normalisation
+        self.env_mean = np.zeros(self.ob_dim)
+        self.env_var = np.ones(self.ob_dim)
+        self.trans_mean = torch.zeros(self.ob_dim * 2).to(self.device)
+        self.trans_var = torch.ones(self.ob_dim * 2).to(self.device)
 
         # env parameters
         self.num_envs = num_envs
@@ -56,32 +51,49 @@ class AMP:
         self.num_learning_epochs = num_learning_epochs
         self.mini_batch_size = mini_batch_size
         self.grad_pen_weight = 10
+        self.logit_reg_weight = logit_reg_weight
+
+        self.buffer = deque(maxlen=1000000)
 
     # -----------------------------------------------------------------------------------------------------------------
     # core methods
     # -----------------------------------------------------------------------------------------------------------------
 
-    def step(self, obs, obs_2):
-        transition = np.concatenate((obs, obs_2), axis=1)
+    def step(self, obs, obs_2, mean, var):
+        # trim extra states
+        obs = obs[:, :self.ob_dim]
+        obs_2 = obs_2[:, :self.ob_dim]
+        mean = mean[:self.ob_dim]
+        var = var[:self.ob_dim]
+
+        # unnormalise
+        obs_un_norm = self.unnormalise(obs, mean, var)
+        obs_2_un_norm = self.unnormalise(obs_2, mean, var)
+
+        transitions = self.generate_transition(obs_un_norm, obs_2_un_norm)
+
+        # store in buffer
+        for t in transitions:
+            self.buffer.append(t)
 
         with torch.no_grad():
-            prediction = self.discriminator.predict(torch.from_numpy(transition).to(self.device).type(torch.float32))
-        return self.get_disc_reward(prediction)
+            # renormalise obs for inference
+            obs_re_norm = self.normalise(obs_un_norm, self.env_mean, self.env_var)
+            obs_2_re_norm = self.normalise(obs_2_un_norm, self.env_mean, self.env_var)
 
-    def update(self, log_this_iteration, update, obs_mean, obs_var):
+            transitions_re_norm = self.generate_transition(obs_re_norm, obs_2_re_norm)
+
+            predictions = self.discriminator.predict(transitions_re_norm)
+
+        return self.get_disc_reward(predictions)
+
+    def update(self, log_this_iteration, update, env_mean, env_var):
         # store normalising stats for expert data
-        self.obs_mean = obs_mean
-        self.obs_var = obs_var
-
-        # remove commands from observations
-        self.obs = self.ppo.storage.obs[..., :self.ob_dim]
-        self.obs_tc = torch.from_numpy(self.obs).to(self.device)
-
-        # store the transitions in self.transitions_tc
-        self.generate_transitions()
+        self.env_mean = env_mean[:self.ob_dim]
+        self.env_var = env_var[:self.ob_dim]
 
         # train network using supervised learning
-        disc_info = self.train_step(log_this_iteration)
+        disc_info = self.train_step(log_this_iteration, update)
 
         if log_this_iteration:
             self.log({**disc_info, 'it': update})
@@ -94,10 +106,10 @@ class AMP:
             'agent_acc': variables['agent_acc']
         }, variables['it'])
 
-    def train_step(self, log_this_iteration):
+    def train_step(self, log_this_iteration, it):
         mean_pred_loss = 0
-        expert_acc_tot = 0
-        agent_acc_tot = 0
+        expert_acc_tot, agent_acc_tot = 0, 0
+        backward_count = 0
 
         # convert agent obs to a pytorch dataloader
         agent_dl = self.agent_to_dataloader()
@@ -117,12 +129,18 @@ class AMP:
                 # Calculate loss
                 pred_loss = self.calculate_prediction_loss(predictions, targets)
                 grad_pen_loss = self.grad_pen_weight / 2 * self.calculate_gradient_penalty(expert_sample)
-                # logit_loss = 0.05 * torch.norm(predictions)
-                output = pred_loss  # + grad_pen_loss + logit_loss
+                logit_loss = self.logit_reg_weight * torch.norm(predictions)
+                output = pred_loss + grad_pen_loss + logit_loss
+
+                # compute jacobian
+                # self.discriminator.loss(
+                #     writer=self.writer if log_this_iteration and backward_count == 0 else None, it=it)
 
                 self.optimizer.zero_grad()
                 output.backward()
                 self.optimizer.step()
+
+                backward_count += 1
 
                 if log_this_iteration:
                     mean_pred_loss += pred_loss.item()
@@ -154,13 +172,11 @@ class AMP:
     # data processing
     # -----------------------------------------------------------------------------------------------------------------
 
-    def generate_transitions(self):
-        # reshape observation into transitions
-        self.transitions_tc_stacked[..., :self.ob_dim] = self.obs_tc[:-1, ...]
-        self.transitions_tc_stacked[..., self.ob_dim:] = self.obs_tc[1:, ...]
+    def generate_transition(self, obs, obs_2):
+        transition = np.concatenate((obs[:, :self.ob_dim], obs_2[:, :self.ob_dim]), axis=1)
+        transition = torch.from_numpy(transition).to(self.device).type(torch.float32)
 
-        # unroll
-        self.transitions_tc = self.transitions_tc_stacked.view(-1, self.transitions_tc_stacked.size()[2])
+        return transition
 
     def process_expert_dataset(self, dataset):
         expert = np.concatenate((dataset[:-1, :], dataset[1:, :]), axis=1)
@@ -176,18 +192,20 @@ class AMP:
         return expert_sample, expert_targets
 
     def normalise_expert_data(self):
-        mean = np.concatenate([self.obs_mean, self.obs_mean])
-        mean = torch.from_numpy(mean).to(self.device).type(torch.float32)
-
-        var = np.concatenate([self.obs_var, self.obs_var])
-        var = torch.from_numpy(var).to(self.device).type(torch.float32)
-
-        self.expert_tc_norm = (self.expert_tc - mean) / torch.sqrt(var)
+        self.expert_tc_norm = self.normalise(self.expert_tc, self.trans_mean, self.trans_var)
 
     def agent_to_dataloader(self):
         # convert the agent obs into a pytorch dataloader
-        targets = -torch.ones((self.transitions_tc.size()[0], 1)).to(self.device)
-        dataset = torch.utils.data.TensorDataset(self.transitions_tc, targets)
+        transitions = torch.stack(list(self.buffer))
+
+        self.trans_mean = torch.from_numpy(
+            np.concatenate([self.env_mean, self.env_mean])).to(self.device)
+        self.trans_var = torch.from_numpy(
+            np.concatenate([self.env_var, self.env_var])).to(self.device)
+        transitions_norm = self.normalise(transitions, self.trans_mean, self.trans_var)
+
+        targets = -torch.ones((transitions_norm.size()[0], 1)).to(self.device)
+        dataset = torch.utils.data.TensorDataset(transitions_norm, targets)
         dl = DataLoader(dataset, batch_size=self.mini_batch_size, shuffle=True)
 
         return dl
@@ -216,3 +234,18 @@ class AMP:
         # style_rewards = -torch.log(1 - 1 / (1 + torch.exp(-prediction)))
         style_rewards = torch.max(torch.zeros(1).to(self.device), 1 - 0.25 * torch.square(prediction - 1))
         return style_rewards.cpu().detach().numpy().reshape((-1,))
+
+    @staticmethod
+    def unnormalise(obs, mean, var):
+        if type(obs) is np.ndarray:
+            return obs * np.sqrt(var) + mean
+        else:
+            return obs * torch.sqrt(var) + mean
+
+    @staticmethod
+    def normalise(obs, mean, var):
+        if type(obs) is np.ndarray:
+            return (obs - mean) / np.sqrt(var)
+        else:
+            return (obs - mean) / torch.sqrt(var)
+
