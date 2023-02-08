@@ -27,6 +27,18 @@ from raisim_gym_torch.algo.ppo.ppo import PPO
 from raisim_gym_torch.algo.amp.amp import AMP
 
 
+def renormalise(env, obs, env_mean, env_var):
+    obs_mean = np.zeros(env.num_obs, dtype=np.float32)
+    obs_var = np.ones(env.num_obs, dtype=np.float32)
+    obs_count = 0
+
+    env.wrapper.getObStatistics(obs_mean, obs_var, obs_count)
+    obs = obs * np.sqrt(obs_var) + obs_mean
+    obs = (obs - env_mean) / np.sqrt(env_var)
+
+    return obs, obs_mean, obs_var
+
+
 def main():
     # task specification
     task_name = "amp"
@@ -111,8 +123,10 @@ def main():
         writer=writer,
         device=device,
         log_dir=saver.data_dir,
-        learning_rate=cfg['algorithm']['learning_rate']['initial'],
-        entropy_coef=0.0,
+        actor_learning_rate=cfg['algorithm']['actor']['learning_rate'],
+        actor_weight_decay=cfg['algorithm']['actor']['weight_decay'],
+        critic_learning_rate=cfg['algorithm']['critic']['learning_rate'],
+        entropy_coef=0.001,
         learning_rate_schedule=cfg['algorithm']['learning_rate']['mode'],
         learning_rate_min=cfg['algorithm']['learning_rate']['min'],
         decay_gamma=learning_rate_decay_gamma
@@ -120,13 +134,16 @@ def main():
 
     amp = AMP(
         discriminator=_discriminator_module,
-        ppo=ppo,
         num_envs=cfg['environment']['num_envs'],
         num_transitions_per_env=n_steps,
         num_learning_epochs=1,
-        mini_batch_size=256,
+        mini_batch_size=cfg['algorithm']['discriminator']['mini_batch_size'],
         expert_dataset=expert_dataset,
         writer=writer,
+        learning_rate=cfg['algorithm']['discriminator']['learning_rate'],
+        weight_decay=cfg['algorithm']['discriminator']['weight_decay'],
+        logit_reg_weight=cfg['algorithm']['discriminator']['logit_reg_weight'],
+        buffer_size=cfg['algorithm']['discriminator']['buffer_size'],
         device=device
     )
 
@@ -147,8 +164,8 @@ def main():
         reward_ll_sum = 0
         done_sum = 0
 
-        obs_mean = np.zeros(env.num_obs, dtype=np.float32)
-        obs_var = np.zeros(env.num_obs, dtype=np.float32)
+        env_mean = np.zeros(env.num_obs, dtype=np.float32)
+        env_var = np.ones(env.num_obs, dtype=np.float32)
         obs_count = 0.0
 
         visualizable_iteration = False
@@ -201,14 +218,17 @@ def main():
             obs = env.observe()
             obs_1 = deepcopy(obs)  # make a deepcopy to prevent obs_1 and obs_2 pointing to the same object
 
+            # renormalise ppo obs based on latest env mean
+            obs_1, obs_mean, obs_var = renormalise(env, obs_1, env_mean, env_var)
+
             action = ppo.act(obs_1)
             reward, dones = env.step(action)
 
             # collect second observation
             obs_2 = env.observe(False)
 
-            # compute style rewards
-            style_reward = style_coeff * amp.step(obs_1, obs_2)
+            # compute style rewards and store un-normalised obs in amp buffer
+            style_reward = style_coeff * amp.step(obs_1, obs_2, obs_mean, obs_var)
             reward += style_reward
 
             ppo.step(rews=reward, dones=dones)
@@ -220,6 +240,7 @@ def main():
 
         # take st step to get value obs
         obs = env.observe()
+        obs, _, _ = renormalise(env, obs, env_mean, env_var)
 
         log_this_iteration = update % cfg['environment']['log_interval'] == 0
 
@@ -230,9 +251,8 @@ def main():
             if log_this_iteration:
                 last_ppo_log_iter = update
 
-            env.wrapper.getObStatistics(obs_mean, obs_var, obs_count)
-            amp.update(log_this_iteration=update % 10 == 0, update=update,
-                       obs_mean=obs_mean[:disc_half_ob_dim], obs_var=obs_var[:disc_half_ob_dim])
+            env.wrapper.getObStatistics(env_mean, env_var, obs_count)
+            amp.update(log_this_iteration=update % 10 == 0, update=update, env_mean=env_mean, env_var=env_var)
             ppo.update(obs=obs, log_this_iteration=log_this_iteration, update=update)
 
             ppo.actor_critic_module.update()

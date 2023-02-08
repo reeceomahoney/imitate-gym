@@ -25,13 +25,14 @@ env.reset()
 
 
 def test_initialisation():
-    for _ in range(1):
+    for _ in range(2):
 
         env.reset()
         frame_start = time.time()
 
         obs = env.observe(False)
-        print("real foot positions: ", obs[:, 33:45])
+        obs = obs[:, :45]
+        print("real obs: ", obs)
 
         # act = np.zeros((240, 12)).astype('float32')
         # env.step(act)

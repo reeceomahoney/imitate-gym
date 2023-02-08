@@ -19,7 +19,9 @@ class PPO:
                  lam=0.95,
                  value_loss_coef=0.5,
                  entropy_coef=0.0,
-                 learning_rate=1e-3,
+                 actor_learning_rate=5e-4,
+                 actor_weight_decay=0.0005,
+                 critic_learning_rate=5e-4,
                  max_grad_norm=0.5,
                  learning_rate_schedule='adaptive',
                  desired_kl=0.01,
@@ -39,12 +41,12 @@ class PPO:
         else:
             self.batch_sampler = self.storage.mini_batch_generator_inorder
 
-        self.optimizer = optim.Adam(self.actor_critic_module.parameters(), lr=learning_rate)
+        # self.optimizer = optim.Adam(self.actor_critic_module.parameters(), lr=learning_rate)
         self.optimizer = optim.Adam([{'params': self.actor_critic_module.actor.parameters(),
-                                      'lr': 5e-4,
-                                      'weight_decay': 0.0},
+                                      'lr': actor_learning_rate,
+                                      'weight_decay': actor_weight_decay},
                                      {'params': self.actor_critic_module.critic.parameters(),
-                                      'lr': 1e-3,
+                                      'lr': critic_learning_rate,
                                       'weight_decay': 0.0}])
         self.device = device
 
@@ -70,7 +72,7 @@ class PPO:
         self.tot_time = 0
 
         # ADAM
-        self.learning_rate = learning_rate
+        self.learning_rate = actor_learning_rate
         self.desired_kl = desired_kl
         self.schedule = learning_rate_schedule
         self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=decay_gamma)
